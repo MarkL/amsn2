@@ -143,6 +143,13 @@ class GIOChannelClient(AbstractClient):
     def close(self):
         if self._status in (IoStatus.CLOSING, IoStatus.CLOSED):
             return
+        try:
+            buf = self._transport.recv(2048)
+            while len(buf) > 0:
+                self.emit("received", buf, len(buf))
+                buf = self._transport.recv(2048)
+        except:
+            pass
         self._status = IoStatus.CLOSING
         self._watch_remove()
         try:
