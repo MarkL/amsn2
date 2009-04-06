@@ -21,9 +21,11 @@
 from pymsn.gnet.constants import *
 from iochannel import GIOChannelClient
 
+import time
 import gobject
 import socket
 
+from errno import *
 
 __all__ = ['SocketClient']
 
@@ -52,6 +54,18 @@ class SocketClient(GIOChannelClient):
         GIOChannelClient._post_open(self)
         opts = self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
         if opts == 0:
+            #make sure the socket is ready
+            ready = False            
+            while ready == False:
+                try:
+                    self._transport.recv(0)
+                    ready = True
+                except socket.error, (error, message):
+                    if error != ENOTCONN:
+                        ready = True
+                    else:
+                        time.sleep(0.01)
+                
             self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI |
                                gobject.IO_ERR | gobject.IO_HUP)
             self._status = IoStatus.OPEN

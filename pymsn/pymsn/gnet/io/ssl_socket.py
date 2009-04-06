@@ -21,6 +21,7 @@
 from pymsn.gnet.constants import *
 from iochannel import GIOChannelClient
 
+import time
 import gobject
 import socket
 import OpenSSL.SSL as OpenSSL
@@ -52,6 +53,17 @@ class SSLSocketClient(GIOChannelClient):
     def _post_open(self):
         GIOChannelClient._post_open(self)
         if self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0:
+            #make sure the socket is ready
+            ready = False
+            while ready == False:
+                try:
+                    self._transport.recv(0)
+                except OpenSSL.SysCallError:
+                    # not open yet
+                    time.sleep(0.01)
+                except OpenSSL.WantReadError:
+                    #the connection is ready
+                    ready = True
             self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI | gobject.IO_OUT |
                                gobject.IO_ERR | gobject.IO_HUP)
         else:
