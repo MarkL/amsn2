@@ -21,11 +21,8 @@
 from pymsn.gnet.constants import *
 from iochannel import GIOChannelClient
 
-import time
 import gobject
 import socket
-
-from errno import *
 
 __all__ = ['SocketClient']
 
@@ -50,29 +47,19 @@ class SocketClient(GIOChannelClient):
                 pass
         GIOChannelClient._pre_open(self, sock)
     
-    def _post_open(self):
-        GIOChannelClient._post_open(self)
-        opts = self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-        if opts == 0:
-            #make sure the socket is ready
-            ready = False            
-            while ready == False:
-                try:
-                    self._transport.recv(0)
-                    ready = True
-                except socket.error, (error, message):
-                    if error != ENOTCONN:
-                        ready = True
-                    else:
-                        time.sleep(0.01)
-                
-            self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI |
-                               gobject.IO_ERR | gobject.IO_HUP)
-            self._status = IoStatus.OPEN
+    def _post_open(self, cond):
+        if GIOChannelClient._post_open(self, cond):
+            opts = self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+            if opts == 0:                    
+                self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI |
+                                   gobject.IO_ERR | gobject.IO_HUP)
+                self._status = IoStatus.OPEN
+            else:
+                self.emit("error", IoError.CONNECTION_FAILED)
+                self._status = IoStatus.CLOSED
+            return False
         else:
-            self.emit("error", IoError.CONNECTION_FAILED)
-            self._status = IoStatus.CLOSED
-        return False
+            return True
     
     def _io_channel_handler(self, chan, cond):
         if self._status == IoStatus.CLOSED:
@@ -91,6 +78,14 @@ class SocketClient(GIOChannelClient):
 
         # Check for error/EOF
         if cond & (gobject.IO_ERR | gobject.IO_HUP):
+            #read the remaining data
+            try:
+                buf = self._transport.recv(2048)
+                while len(buf) > 0:
+                    self.emit("received", buf, len(buf))
+                    buf = self._transport.recv(2048)
+            except:
+                pass
             self.close()
             return False
 

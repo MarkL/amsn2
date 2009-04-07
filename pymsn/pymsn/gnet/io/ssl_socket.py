@@ -50,26 +50,17 @@ class SSLSocketClient(GIOChannelClient):
         ssl_sock = OpenSSL.Connection(context, sock)
         GIOChannelClient._pre_open(self, ssl_sock)
     
-    def _post_open(self):
-        GIOChannelClient._post_open(self)
-        if self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0:
-            #make sure the socket is ready
-            ready = False
-            while ready == False:
-                try:
-                    self._transport.recv(0)
-                except OpenSSL.SysCallError:
-                    # not open yet
-                    time.sleep(0.01)
-                except OpenSSL.WantReadError:
-                    #the connection is ready
-                    ready = True
-            self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI | gobject.IO_OUT |
-                               gobject.IO_ERR | gobject.IO_HUP)
+    def _post_open(self, cond):
+        if GIOChannelClient._post_open(self, cond):
+            if self._transport.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0:
+                self._watch_set_cond(gobject.IO_IN | gobject.IO_PRI | gobject.IO_OUT |
+                                   gobject.IO_ERR | gobject.IO_HUP)
+            else:
+                self.emit("error", IoError.CONNECTION_FAILED)
+                self._status = IoStatus.CLOSED
+            return False
         else:
-            self.emit("error", IoError.CONNECTION_FAILED)
-            self._status = IoStatus.CLOSED
-        return False
+            return True
     
     def _io_channel_handler(self, chan, cond):
         if self._status == IoStatus.CLOSED:
@@ -99,6 +90,14 @@ class SSLSocketClient(GIOChannelClient):
                 self.emit("received", buf, len(buf))
 
             if cond & (gobject.IO_ERR | gobject.IO_HUP):
+                #read the remaining data
+                try:
+                    buf = self._transport.recv(2048)
+                    while len(buf) > 0:
+                        self.emit("received", buf, len(buf))
+                        buf = self._transport.recv(2048)
+                except:
+                    pass
                 self.close()
                 return False
 

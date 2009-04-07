@@ -81,9 +81,40 @@ class GIOChannelClient(AbstractClient):
         self._outgoing_queue = []
         AbstractClient._pre_open(self)
 
-    def _post_open(self):
+    def _post_open(self, cond):
         AbstractClient._post_open(self)
-        self._watch_remove()
+
+        # The IO_OUT event would normally indicate that the socket has finished
+        # connecting. To handle this we would use the following code:
+        
+        # if cond & IO_OUT:
+        #   return True
+        # else:
+        #   return False
+        
+        # Due to a bug in glib the IO_OUT event is sent prematurely, therefore
+        # we use the following code until the bug in glib is fixed:
+
+        try:
+            self._transport.recv(0)
+        except Exception, e:
+            #the following exceptions can be raised:
+            # socket.error (error, message)
+            # openSSL.SSL.SysCallError (error, message)
+            # openSSL.SSL.WantReadError ()
+            try:
+                (error, message) = e
+                #the socket is connected if we don't get the ENOTCONN error
+                if error != ENOTCONN:
+                    self._watch_remove()
+                    return True
+                else:
+                    return False
+            # the openSSL.SSL.WantReadError -> socket is connected
+            except:
+                self._watch_remove()
+                return True
+                
 
     def _open(self, host, port):
         resolver = HostnameResolver()
@@ -99,7 +130,7 @@ class GIOChannelClient(AbstractClient):
         err = self._transport.connect_ex((host, port))
         self._watch_set_cond(gobject.IO_PRI | gobject.IO_IN | gobject.IO_OUT |
                 gobject.IO_HUP | gobject.IO_ERR | gobject.IO_NVAL,
-                lambda chan, cond: self._post_open())
+                lambda chan, cond: self._post_open(cond))
         if err in (0, EINPROGRESS, EALREADY, EWOULDBLOCK, EISCONN):
             return
         elif err in (EHOSTUNREACH, EHOSTDOWN, ECONNREFUSED, ECONNABORTED,
@@ -143,13 +174,6 @@ class GIOChannelClient(AbstractClient):
     def close(self):
         if self._status in (IoStatus.CLOSING, IoStatus.CLOSED):
             return
-        try:
-            buf = self._transport.recv(2048)
-            while len(buf) > 0:
-                self.emit("received", buf, len(buf))
-                buf = self._transport.recv(2048)
-        except:
-            pass
         self._status = IoStatus.CLOSING
         self._watch_remove()
         try:
